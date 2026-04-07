@@ -1,0 +1,87 @@
+discord:
+  webhook_url_env: DISCORD_WEBHOOK_URL
+
+data:
+  interval: 5m
+  period: 5d
+  state_file: .alert_state.json
+
+symbols:
+  - id: XEQT
+    yahoo: XEQT.TO
+    kind: etf
+  - id: VEQT
+    yahoo: VEQT.TO
+    kind: etf
+  - id: VBAL
+    yahoo: VBAL.TO
+    kind: etf
+  - id: NVDA
+    yahoo: NVDA
+    kind: stock
+  - id: GOOGL
+    yahoo: GOOGL
+    kind: stock
+  - id: MSFT
+    yahoo: MSFT
+    kind: stock
+  - id: COST
+    yahoo: COST
+    kind: stock
+
+symbol_groups:
+  etfs:
+    - XEQT
+    - VEQT
+    - VBAL
+  stocks:
+    - NVDA
+    - GOOGL
+    - MSFT
+    - COST
+
+market_summaries:
+  timezone: America/Toronto
+  open:
+    enabled: true
+    id: market_open_prices
+    send_after: "09:35"
+    symbols_from_groups:
+      - etfs
+      - stocks
+    title: "Market open prices for {market_date}"
+    line_template: "- {symbol}: {price:.2f}"
+  close:
+    enabled: true
+    id: market_close_prices
+    send_after: "16:05"
+    symbols_from_groups:
+      - etfs
+      - stocks
+    title: "Market close prices for {market_date}"
+    line_template: "- {symbol}: {price:.2f}"
+
+rule_templates:
+  # ETFs: buy setup when RSI14 drops below 38.
+  - id: "{symbol_lc}_etf_buy_setup"
+    symbols_from_group: etfs
+    condition:
+      left: rsi_14
+      op: lt
+      right: 38
+    cooldown_minutes: 240
+    message: "{symbol} ETF buy setup: RSI14={rsi_14:.2f}, Close={close:.2f}, SMA50={sma_50:.2f}"
+
+  # Stocks: buy setup when RSI14 is below 30 and price is at or within 2% above SMA50.
+  - id: "{symbol_lc}_stock_buy_setup"
+    symbols_from_group: stocks
+    condition:
+      all:
+        - left: rsi_14
+          op: lt
+          right: 30
+        - left: close
+          op: lte
+          right: sma_50 * 1.02
+    cooldown_minutes: 240
+    message: "{symbol} stock buy setup: RSI14={rsi_14:.2f}, Close={close:.2f}, SMA50={sma_50:.2f}"
