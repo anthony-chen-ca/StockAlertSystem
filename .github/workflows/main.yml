@@ -1,0 +1,51 @@
+name: Stock Alerts
+
+on:
+  schedule:
+    - cron: "*/5 * * * 1-5"
+  workflow_dispatch:
+
+concurrency:
+  group: stock-alerts
+  cancel-in-progress: false
+
+jobs:
+  run-alerts:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      ALERT_STATE_FILE: .alert_state.json
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Restore alert state
+        id: restore-state
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.ALERT_STATE_FILE }}
+          key: stock-alert-state-${{ runner.os }}-${{ hashFiles('alerts.yml') }}-${{ github.run_id }}
+          restore-keys: |
+            stock-alert-state-${{ runner.os }}-${{ hashFiles('alerts.yml') }}-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run alerts
+        run: python main.py --config alerts.yml
+
+      - name: Save alert state
+        if: always() && hashFiles('.alert_state.json') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.ALERT_STATE_FILE }}
+          key: stock-alert-state-${{ runner.os }}-${{ hashFiles('alerts.yml') }}-${{ github.run_id }}
