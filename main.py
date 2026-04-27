@@ -256,6 +256,19 @@ def get_history_settings(config: dict[str, Any]) -> tuple[str, str]:
     return interval, period
 
 
+def get_rule_history_settings(rule: dict[str, Any], config: dict[str, Any]) -> tuple[str, str]:
+    default_interval, default_period = get_history_settings(config)
+    rule_data = rule.get("data", {})
+    if rule_data is None:
+        return default_interval, default_period
+    if not isinstance(rule_data, dict):
+        raise ValueError(f"Rule {rule.get('id')} data must be a mapping when provided.")
+
+    interval = str(rule_data.get("interval", default_interval))
+    period = str(rule_data.get("period", default_period))
+    return interval, period
+
+
 def fetch_symbol_histories(
     symbol_map: dict[str, dict[str, str]],
     interval: str,
@@ -311,6 +324,8 @@ def parse_metric_name(metric: str) -> tuple[str, int | None]:
         return "sma", int(metric_name.split("_", maxsplit=1)[1])
     if metric_name.startswith("rsi_"):
         return "rsi", int(metric_name.split("_", maxsplit=1)[1])
+    if metric_name.startswith("max_close_"):
+        return "max_close", int(metric_name.split("_", maxsplit=2)[2])
     raise ValueError(f"Unsupported metric: {metric}")
 
 
@@ -331,6 +346,8 @@ def resolve_metric_series(
         series = close.rolling(window=period, min_periods=period).mean()
     elif metric_type == "rsi":
         series = compute_rsi(close, period)
+    elif metric_type == "max_close":
+        series = close.rolling(window=period, min_periods=period).max()
     else:
         raise ValueError(f"Unsupported metric: {metric_name}")
 
@@ -805,12 +822,41 @@ def build_rule_result(
     )
 
 
-def collect_rule_alerts(
+def fetch_rule_histories(
+    rules: list[dict[str, Any]],
     config: dict[str, Any],
     symbol_map: dict[str, dict[str, str]],
-    symbol_histories: dict[str, pd.DataFrame],
+    existing_histories: dict[tuple[str, str, str], pd.DataFrame] | None = None,
+) -> dict[tuple[str, str, str], pd.DataFrame]:
+    histories = dict(existing_histories or {})
+    for rule in rules:
+        if not isinstance(rule, dict):
+            raise ValueError("Each rule entry must be a mapping.")
+
+        symbol_id = str(rule.get("symbol", "")).strip()
+        if not symbol_id:
+            raise ValueError("Each rule must include symbol.")
+
+        symbol = symbol_map.get(symbol_id)
+        if symbol is None:
+            raise ValueError(f"Rule {rule.get('id')} references unknown symbol {symbol_id}.")
+
+        interval, period = get_rule_history_settings(rule, config)
+        history_key = (symbol_id, interval, period)
+        if history_key in histories:
+            continue
+
+        histories[history_key] = fetch_history(symbol["yahoo"], interval=interval, period=period)
+
+    return histories
+
+
+def collect_rule_alerts(
+    rules: list[dict[str, Any]],
+    config: dict[str, Any],
+    symbol_map: dict[str, dict[str, str]],
+    rule_histories: dict[tuple[str, str, str], pd.DataFrame],
 ) -> list[RuleResult]:
-    rules = expand_rule_templates(config)
     if not isinstance(rules, list):
         raise ValueError("alerts.yml rules must expand to a list.")
     if not rules:
@@ -830,7 +876,13 @@ def collect_rule_alerts(
         if symbol is None:
             raise ValueError(f"Rule {rule_id} references unknown symbol {symbol_id}.")
 
-        result = build_rule_result(rule, symbol, symbol_histories[symbol_id])
+        interval, period = get_rule_history_settings(rule, config)
+        history_key = (symbol_id, interval, period)
+        history = rule_histories.get(history_key)
+        if history is None:
+            raise ValueError(f"Missing history for rule {rule_id} with interval={interval} period={period}.")
+
+        result = build_rule_result(rule, symbol, history)
         if result is not None:
             alerts.append(result)
 
@@ -860,7 +912,14 @@ def main() -> int:
     interval, period = get_history_settings(config)
     symbol_histories = fetch_symbol_histories(symbol_map, interval=interval, period=period)
     summary_alerts = collect_summary_alerts(config, symbol_map, symbol_histories, now)
-    rule_alerts = collect_rule_alerts(config, symbol_map, symbol_histories)
+    expanded_rules = expand_rule_templates(config)
+    rule_histories = fetch_rule_histories(
+        expanded_rules,
+        config,
+        symbol_map,
+        existing_histories={(symbol_id, interval, period): history for symbol_id, history in symbol_histories.items()},
+    )
+    rule_alerts = collect_rule_alerts(expanded_rules, config, symbol_map, rule_histories)
 
     if not summary_alerts and not rule_alerts:
         save_state(state_path, state)

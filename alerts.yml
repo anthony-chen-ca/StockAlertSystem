@@ -28,6 +28,21 @@ symbols:
   - id: COST
     yahoo: COST
     kind: stock
+  - id: AAPL
+    yahoo: AAPL
+    kind: stock
+  - id: AMZN
+    yahoo: AMZN
+    kind: stock
+  - id: META
+    yahoo: META
+    kind: stock
+  - id: AVGO
+    yahoo: AVGO
+    kind: stock
+  - id: BRK.B
+    yahoo: BRK-B
+    kind: stock
 
 symbol_groups:
   etfs:
@@ -39,6 +54,11 @@ symbol_groups:
     - GOOGL
     - MSFT
     - COST
+    - AAPL
+    - AMZN
+    - META
+    - AVGO
+    - BRK.B
 
 market_summaries:
   timezone: America/Toronto
@@ -70,11 +90,20 @@ rule_templates:
       op: lt
       right: 38
     cooldown_minutes: 240
-    message: "{symbol} ETF buy setup: RSI14={rsi_14:.2f}, Close={close:.2f}, SMA50={sma_50:.2f}"
+    message: |
+      ETF Buy Setup - {symbol}
+      RSI14={rsi_14:.2f} (<38, short-term dip)
+      Close={close:.2f}
+      SMA50={sma_50:.2f}
+
+      Interpretation: Broad-market ETF is in a short-term pullback. Consider adding only if it fits your allocation plan and cash deployment rules.
 
   # Stocks: buy setup when RSI14 is below 30 and price is at or within 2% above SMA50.
   - id: "{symbol_lc}_stock_buy_setup"
     symbols_from_group: stocks
+    data:
+      interval: 1d
+      period: 2y
     condition:
       all:
         - left: rsi_14
@@ -84,4 +113,87 @@ rule_templates:
           op: lte
           right: sma_50 * 1.02
     cooldown_minutes: 240
-    message: "{symbol} stock buy setup: RSI14={rsi_14:.2f}, Close={close:.2f}, SMA50={sma_50:.2f}"
+    message: |
+      Stock Buy Setup - {symbol}
+      RSI14={rsi_14:.2f} (<30, oversold)
+      Close={close:.2f}
+      SMA50={sma_50:.2f}
+
+      Interpretation: Stock is oversold and trading near its 50-day trend.
+      Next step: Review news, earnings, and valuation before buying.
+
+  # Stocks: Rule 1 sell watch when the stock is overheated and extended above trend.
+  - id: "{symbol_lc}_stock_sell_setup_rule1"
+    symbols_from_group: stocks
+    data:
+      interval: 1d
+      period: 2y
+    condition:
+      all:
+        - left: rsi_14
+          op: gt
+          right: 72
+        - left: close
+          op: gte
+          right: sma_50 * 1.10
+    cooldown_minutes: 1440
+    message: |
+      Stock Sell Watch - {symbol} (Rule 1)
+      RSI14={rsi_14:.2f}
+      Close={close:.2f}
+      SMA50={sma_50:.2f}
+
+      Interpretation: Stock looks overheated, with RSI above 72 and price more than 10% above its 50-day average.
+      Action: Consider pausing new buys or trimming only if the position size, valuation, or recent news looks stretched.
+
+  # Stocks: Rule 2 sell warning when the long-term trend is weakening.
+  - id: "{symbol_lc}_stock_sell_setup_rule2"
+    symbols_from_group: stocks
+    data:
+      interval: 1d
+      period: 2y
+    condition:
+      all:
+        - left: close
+          op: lt
+          right: sma_200
+        - left: sma_50
+          op: lt
+          right: sma_200
+        - left: rsi_14
+          op: lt
+          right: 45
+    cooldown_minutes: 1440
+    message: |
+      Stock Sell Warning - {symbol} (Rule 2)
+      RSI14={rsi_14:.2f}
+      Close={close:.2f}
+      SMA50={sma_50:.2f}
+      SMA200={sma_200:.2f}
+
+      Interpretation: Long-term trend is weakening. Price is below the 200-day average, the 50-day average is below the 200-day average, and momentum is soft.
+      Action: Re-check the original thesis, earnings outlook, and competitive position.
+
+  # Stocks: Rule 3 escalation when drawdown is severe and company-specific news should be reviewed.
+  - id: "{symbol_lc}_stock_sell_setup_rule3"
+    symbols_from_group: stocks
+    data:
+      interval: 1d
+      period: 2y
+    condition:
+      all:
+        - left: close
+          op: lte
+          right: max_close_252 * 0.75
+        - left: close
+          op: lt
+          right: sma_200
+    cooldown_minutes: 1440
+    message: |
+      Stock Sell Escalation - {symbol} (Rule 3)
+      Close={close:.2f}
+      52-week high={max_close_252:.2f}
+      SMA200={sma_200:.2f}
+
+      Interpretation: Stock is down more than 25% from its 52-week high and remains below its 200-day average.
+      Action: Do a deeper review of earnings, guidance, balance-sheet risk, and any material company-specific news.
